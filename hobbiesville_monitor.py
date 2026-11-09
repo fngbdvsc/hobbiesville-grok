@@ -5,7 +5,7 @@ Hobbiesville runs on Shopify. Plain web requests were refused from Railway (HTTP
 opens the homepage in a real Chrome and reads the public product data from there. Every Shopify
 product page has its data at <product link>.js (name, price, and whether each option can be bought).
 
-- Every request to Hobbiesville is spaced 8-15 seconds apart (random).
+- Every request to Hobbiesville is spaced 3-5 seconds apart (random).
 - An alert posts once when a watched product comes into stock, and re-arms when it sells out.
 - Collection scan (SCAN_COLLECTIONS, default pokemon-trading-cards): one request reads up to 250 products of a
   collection with their price and stock, so restocks of products you didn't add and brand-new listings alert too.
@@ -49,11 +49,12 @@ STORE = "Hobbiesville"
 LOG_TAG = "[Hobbiesville] "    # put in front of every dashboard line, so it's clear which bot sent it
 DASH_STORE = "hobbiesville"    # x-bot-store header + the dashboard store filter
 
-GAP_MIN = 8                    # seconds between ANY two requests to Hobbiesville...
-GAP_MAX = 15                   # ...random between these two numbers
+# Seconds between ANY two requests. Defaults are 3 and 5. A Railway value below 3 is ignored.
+GAP_MIN = max(3, int(os.environ.get("GAP_MIN", "3")))
+GAP_MAX = max(GAP_MIN, int(os.environ.get("GAP_MAX", "5")))
 
 # Each product is checked at most once per this many seconds. With a short list the bot idles between rounds.
-MIN_SECONDS_PER_ROUND = int(os.environ.get("MIN_SECONDS_PER_ROUND", "60"))
+MIN_SECONDS_PER_ROUND = int(os.environ.get("MIN_SECONDS_PER_ROUND", "3"))
 
 # On a bot check / "too many requests": pause this many seconds, doubling each time up to BLOCK_RETRY_MAX.
 BACKOFF_START = int(os.environ.get("BLOCK_RETRY_SECONDS", "300"))

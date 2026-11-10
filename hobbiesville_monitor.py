@@ -1493,7 +1493,7 @@ def run_bot():
     if not token or not channel_raw:
         sys.exit("Missing DISCORD_TOKEN or CHANNEL_ID. Set them in Railway Variables.")
     channel_id = int(channel_raw)
-    error_channel_id = int(os.environ.get("ERROR_CHANNEL_ID", "").strip() or 0)   # every error is copied here
+    error_channel_id = int(os.environ.get("ERROR_CHANNEL_ID", "").strip() or 1569512045525729623)   # every error is copied here
 
     intents = discord.Intents.default()
     intents.message_content = True      # needed to read !commands (enable it in the Developer Portal too)
@@ -1592,7 +1592,7 @@ def run_bot():
             return bool(perms and perms.manage_guild)
 
         async def on_message(self, message):
-            if message.author.bot or message.channel.id != channel_id:
+            if message.author.bot or message.channel.id not in (channel_id, error_channel_id):
                 return
             if not message.content.startswith("!"):
                 return

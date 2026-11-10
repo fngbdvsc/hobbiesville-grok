@@ -792,12 +792,15 @@ class Monitor:
         self.state = st if isinstance(st, dict) else {}
         cfg = load_json(CONFIG_FILE)
         self.gap_min, self.gap_max = GAP_MIN, GAP_MAX
+        self.backoff_start = BACKOFF_START
         if isinstance(cfg, dict) and isinstance(cfg.get("gap"), list) and len(cfg["gap"]) == 2:
             try:
                 lo = max(3.0, float(cfg["gap"][0]))
                 self.gap_min, self.gap_max = lo, max(lo, float(cfg["gap"][1]))
             except (TypeError, ValueError):
                 pass
+        if isinstance(cfg, dict) and isinstance(cfg.get("backoff"), (int, float)) and cfg["backoff"] >= 10:
+            self.backoff_start = int(cfg["backoff"])
         if isinstance(cfg, dict) and isinstance(cfg.get("watch"), list):
             self.watch = [h for h in (parse_handle(s) for s in cfg["watch"]) if h]
         elif dashboard is not None:
@@ -807,7 +810,7 @@ class Monitor:
 
         self.paused = False
         self.blocked_until = 0.0
-        self.backoff = BACKOFF_START
+        self.backoff = self.backoff_start
         self.was_blocked = False
         self.blocks_in_row = 0
         self.block_started = self.last_block_note = 0.0
@@ -913,7 +916,8 @@ class Monitor:
         self.recent = (handle, name, in_stock, source, local_now())
 
     def save_config(self):
-        save_json(CONFIG_FILE, {"watch": self.watch, "gap": [self.gap_min, self.gap_max]})
+        save_json(CONFIG_FILE, {"watch": self.watch, "gap": [self.gap_min, self.gap_max],
+                               "backoff": self.backoff_start})
 
     def round_estimate(self):
         jobs = len(self.watch) + len(self.collections)
@@ -993,7 +997,7 @@ class Monitor:
             await self.check_region()
             if self.was_blocked:
                 self.was_blocked = False
-                self.backoff = BACKOFF_START
+                self.backoff = self.backoff_start
                 mins = (self.clock() - self.block_started) / 60
                 tries = (f" after {self.blocks_in_row} blocked tries over {mins:.0f} min"
                          if self.blocks_in_row > 1 else f" after {mins:.0f} min")
@@ -1035,7 +1039,7 @@ class Monitor:
             self.last_block_note = now
             await self._say(f"Still blocked by Hobbiesville: {(now - self.block_started) / 60:.0f} min so far, "
                             f"{self.blocks_in_row} tries in a row. Next retry in {wait}.", kind="error")
-        self.backoff = min(self.backoff * 2, BACKOFF_MAX)
+        self.backoff = min(self.backoff * 2, max(BACKOFF_MAX, self.backoff_start))
 
     async def reset_session(self):
         """After a block, start over with a fresh connection and no cookies."""
@@ -1359,14 +1363,34 @@ class Monitor:
                     f"Stock: {'IN STOCK' if ok else 'OUT OF STOCK / not buyable'}\n"
                     f"Checked through: {src}")
 
-        if cmd in ("speed", "gap", "requesttime"):
+        if cmd == "requesttime":
+            def fmt(sec):
+                return f"{sec / 60:g} minutes" if sec >= 120 else f"{sec:g} seconds"
+            if len(args) != 1:
+                return (f"After a bot check or 'too many requests' I pause {fmt(self.backoff_start)}, doubling on each "
+                        f"repeat block (up to {fmt(max(BACKOFF_MAX, self.backoff_start))}). Change the first pause with "
+                        "`!requesttime <time>`, e.g. `!requesttime 10` (minutes), `!requesttime 10m` or `!requesttime 90s`.")
+            raw = args[0].lower()
+            try:
+                sec = float(raw[:-1]) if raw.endswith("s") else float(raw[:-1]) * 60 if raw.endswith("m") else float(raw) * 60
+            except ValueError:
+                return "Usage: `!requesttime <time>`, e.g. `!requesttime 10` (minutes), `10m` or `90s`."
+            if sec < 10 or sec > 86400:
+                return "Pick a pause between 10 seconds and 24 hours."
+            self.backoff_start = int(sec)
+            if not self.was_blocked:
+                self.backoff = self.backoff_start
+            self.save_config()
+            return f"Done. After a block I'll now pause {fmt(self.backoff_start)} first (doubling on repeat blocks)."
+
+        if cmd in ("speed", "gap"):
             if len(args) != 2:
                 return (f"Requests are spaced {self.gap_min:g}-{self.gap_max:g}s apart. "
-                        "Change it with `!requesttime <min> <max>` in seconds, e.g. `!speed 3 5` (minimum 3).")
+                        "Change it with `!speed <min> <max>` in seconds, e.g. `!speed 3 5` (minimum 3).")
             try:
                 lo, hi = float(args[0]), float(args[1])
             except ValueError:
-                return "Usage: `!requesttime <min> <max>` with numbers of seconds, e.g. `!speed 3 5`."
+                return "Usage: `!speed <min> <max>` with numbers of seconds, e.g. `!speed 3 5`."
             if lo < 3 or hi < lo or hi > 600:
                 return "Needs min of at least 3, max not below min, and max no more than 600 seconds."
             self.gap_min, self.gap_max = lo, hi
@@ -1446,7 +1470,8 @@ class Monitor:
                     "`!find <words>` - search the products the collection scan has seen, any order, short forms OK (e.g. `!find 30th upc night`, `!find etb`)\n"
                     "`!pause` / `!resume` - stop or restart all requests\n"
                     "`!recent` - the last product I checked, the exact time, and whether it was in stock\n"
-                    "`!requesttime <min> <max>` (same as `!speed`) - seconds between requests (e.g. `!speed 3 5`, minimum 3); `!speed` shows it\n"
+                    "`!speed <min> <max>` - seconds between requests (e.g. `!speed 3 5`, minimum 3); `!speed` shows it\n"
+                    "`!requesttime <time>` - how long I pause after a bot check/block (e.g. `!requesttime 10` = 10 minutes, `90s`); `!requesttime` shows it\n"
                     "`!refresh` - start a fresh check round right now\n"
                     "`!status` - am I running, blocked or paused, and what the collection scan sees\n"
                     "The collection scan (Railway variable SCAN_COLLECTIONS) also alerts on restocks and new "

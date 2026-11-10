@@ -819,6 +819,7 @@ class Monitor:
         self.round_open = False
         self.next_round_at = 0.0
         self.priority = deque()
+        self.recent = None
         self.refresh = False
         self.reasons = {}      # handle -> (text, time string)
         self.names = {}
@@ -907,6 +908,9 @@ class Monitor:
         changed = self.reasons.get(handle, ("",))[0] != text
         self.reasons[handle] = (text, local_now().strftime("%I:%M:%S %p"))
         return changed
+
+    def note_recent(self, handle, name, in_stock, source):
+        self.recent = (handle, name, in_stock, source, local_now())
 
     def save_config(self):
         save_json(CONFIG_FILE, {"watch": self.watch, "gap": [self.gap_min, self.gap_max]})
@@ -1100,6 +1104,7 @@ class Monitor:
             prev_reason = self.reasons.get(handle, (None,))[0]
             reason = reason_text(v, ok)
             self.set_reason(handle, reason)
+            self.note_recent(handle, v["name"], ok, f"collection scan ({coll})")
             if silent or not ok or prev is True:
                 continue
             if seen:
@@ -1192,6 +1197,7 @@ class Monitor:
         self.state[key] = ok
         prev_reason = self.reasons.get(handle, (None,))[0]
         reason = reason_text(v, ok)
+        self.note_recent(handle, name, ok, "watchlist")
         if self.set_reason(handle, reason):
             print(f"[watch] {handle}: {reason}")
 
@@ -1344,14 +1350,23 @@ class Monitor:
                 lines.append(f"`{h}` {name}: {r[0] if r else 'not checked yet'}")
             return f"Watching {len(self.watch)}:\n" + "\n".join(lines)
 
-        if cmd in ("speed", "gap"):
+        if cmd == "recent":
+            if not self.recent:
+                return "I haven't finished checking any product yet."
+            h, n, ok, src, t = self.recent
+            return (f"Most recent check: **{n}** (`{h}`)\n"
+                    f"Time: {t:%A %B %d, %Y at %I:%M:%S %p %Z}\n"
+                    f"Stock: {'IN STOCK' if ok else 'OUT OF STOCK / not buyable'}\n"
+                    f"Checked through: {src}")
+
+        if cmd in ("speed", "gap", "requesttime"):
             if len(args) != 2:
                 return (f"Requests are spaced {self.gap_min:g}-{self.gap_max:g}s apart. "
-                        "Change it with `!speed <min> <max>` in seconds, e.g. `!speed 3 5` (minimum 3).")
+                        "Change it with `!requesttime <min> <max>` in seconds, e.g. `!speed 3 5` (minimum 3).")
             try:
                 lo, hi = float(args[0]), float(args[1])
             except ValueError:
-                return "Usage: `!speed <min> <max>` with numbers of seconds, e.g. `!speed 3 5`."
+                return "Usage: `!requesttime <min> <max>` with numbers of seconds, e.g. `!speed 3 5`."
             if lo < 3 or hi < lo or hi > 600:
                 return "Needs min of at least 3, max not below min, and max no more than 600 seconds."
             self.gap_min, self.gap_max = lo, hi
@@ -1430,7 +1445,8 @@ class Monitor:
                     "`!why <link>` - the reason for my latest decision on one product\n"
                     "`!find <words>` - search the products the collection scan has seen, any order, short forms OK (e.g. `!find 30th upc night`, `!find etb`)\n"
                     "`!pause` / `!resume` - stop or restart all requests\n"
-                    "`!speed <min> <max>` - seconds between requests (e.g. `!speed 3 5`, minimum 3); `!speed` shows it\n"
+                    "`!recent` - the last product I checked, the exact time, and whether it was in stock\n"
+                    "`!requesttime <min> <max>` (same as `!speed`) - seconds between requests (e.g. `!speed 3 5`, minimum 3); `!speed` shows it\n"
                     "`!refresh` - start a fresh check round right now\n"
                     "`!status` - am I running, blocked or paused, and what the collection scan sees\n"
                     "The collection scan (Railway variable SCAN_COLLECTIONS) also alerts on restocks and new "

@@ -791,6 +791,13 @@ class Monitor:
         self.fresh_start = not isinstance(st, dict)   # no saved memory: the first scan only learns, no alerts
         self.state = st if isinstance(st, dict) else {}
         cfg = load_json(CONFIG_FILE)
+        self.gap_min, self.gap_max = GAP_MIN, GAP_MAX
+        if isinstance(cfg, dict) and isinstance(cfg.get("gap"), list) and len(cfg["gap"]) == 2:
+            try:
+                lo = max(3.0, float(cfg["gap"][0]))
+                self.gap_min, self.gap_max = lo, max(lo, float(cfg["gap"][1]))
+            except (TypeError, ValueError):
+                pass
         if isinstance(cfg, dict) and isinstance(cfg.get("watch"), list):
             self.watch = [h for h in (parse_handle(s) for s in cfg["watch"]) if h]
         elif dashboard is not None:
@@ -806,7 +813,7 @@ class Monitor:
         self.block_started = self.last_block_note = 0.0
         self.block_places = {}
         self.good_pages = 0
-        self.last_request = clock() - GAP_MAX
+        self.last_request = clock() - self.gap_max
         self.requests_made = 0
         self.round = deque()
         self.round_open = False
@@ -897,14 +904,14 @@ class Monitor:
         return changed
 
     def save_config(self):
-        save_json(CONFIG_FILE, {"watch": self.watch})
+        save_json(CONFIG_FILE, {"watch": self.watch, "gap": [self.gap_min, self.gap_max]})
 
     def round_estimate(self):
         jobs = len(self.watch) + len(self.collections)
-        return max(int(jobs * (GAP_MIN + GAP_MAX) / 2), MIN_SECONDS_PER_ROUND if jobs else 0)
+        return max(int(jobs * (self.gap_min + self.gap_max) / 2), MIN_SECONDS_PER_ROUND if jobs else 0)
 
     async def wait_turn(self):
-        gap = self.rand(GAP_MIN, GAP_MAX)
+        gap = self.rand(self.gap_min, self.gap_max)
         wait = self.last_request + gap - self.clock()
         if wait > 0:
             await self.sleep(wait)
@@ -1331,18 +1338,33 @@ class Monitor:
                 lines.append(f"`{h}` {name}: {r[0] if r else 'not checked yet'}")
             return f"Watching {len(self.watch)}:\n" + "\n".join(lines)
 
+        if cmd in ("speed", "gap"):
+            if len(args) != 2:
+                return (f"Requests are spaced {self.gap_min:g}-{self.gap_max:g}s apart. "
+                        "Change it with `!speed <min> <max>` in seconds, e.g. `!speed 3 5` (minimum 3).")
+            try:
+                lo, hi = float(args[0]), float(args[1])
+            except ValueError:
+                return "Usage: `!speed <min> <max>` with numbers of seconds, e.g. `!speed 3 5`."
+            if lo < 3 or hi < lo or hi > 600:
+                return "Needs min of at least 3, max not below min, and max no more than 600 seconds."
+            self.gap_min, self.gap_max = lo, hi
+            self.save_config()
+            return (f"Done. Requests will now be {lo:g}-{hi:g} seconds apart "
+                    f"(a full round takes about {self.round_estimate()}s).")
+
         if cmd == "pause":
             self.paused = True
             return "Paused. I'm making NO requests to Hobbiesville until you send `!resume`."
 
         if cmd == "resume":
             self.paused = False
-            return f"Resumed. Checks continue (each request {GAP_MIN}-{GAP_MAX} seconds apart)."
+            return f"Resumed. Checks continue (each request {self.gap_min}-{self.gap_max} seconds apart)."
 
         if cmd == "refresh":
             self.refresh = True
             return (f"Refresh queued: I'll start a fresh round of every watched product now. The first request "
-                    f"goes out within {GAP_MAX} seconds, and a full round takes about {self.round_estimate()} seconds.")
+                    f"goes out within {self.gap_max} seconds, and a full round takes about {self.round_estimate()} seconds.")
 
         if cmd == "status":
             if self.paused:
@@ -1359,7 +1381,7 @@ class Monitor:
             else:
                 scan = "off"
             return (f"Status: {state}\nWatching {len(self.watch)} product(s), checked about every "
-                    f"{self.round_estimate()}s (requests spaced {GAP_MIN}-{GAP_MAX}s apart).\n"
+                    f"{self.round_estimate()}s (requests spaced {self.gap_min}-{self.gap_max}s apart).\n"
                     f"Collection scan: {scan}.\n"
                     f"Store I'm seeing: {self.store_seen() or 'not known yet'}"
                     f"{'' if self.store_seen() in (None, STORE_CURRENCY) else ' (WRONG: should be ' + STORE_CURRENCY + ')'}.\n"
@@ -1402,6 +1424,7 @@ class Monitor:
                     "`!why <link>` - the reason for my latest decision on one product\n"
                     "`!find <words>` - search the products the collection scan has seen, any order, short forms OK (e.g. `!find 30th upc night`, `!find etb`)\n"
                     "`!pause` / `!resume` - stop or restart all requests\n"
+                    "`!speed <min> <max>` - seconds between requests (e.g. `!speed 3 5`, minimum 3); `!speed` shows it\n"
                     "`!refresh` - start a fresh check round right now\n"
                     "`!status` - am I running, blocked or paused, and what the collection scan sees\n"
                     "The collection scan (Railway variable SCAN_COLLECTIONS) also alerts on restocks and new "
@@ -1542,7 +1565,7 @@ def run_bot():
                     f"Collection scan: {', '.join(self.mon.collections) or 'off'}.\n"
                     f"Alerts when a watched or scanned product comes into stock, or a new one is listed. "
                     f"Every request to Hobbiesville is "
-                    f"{GAP_MIN}-{GAP_MAX}s apart. Type `!help` for commands.")
+                    f"{self.mon.gap_min:g}-{self.mon.gap_max:g}s apart. Type `!help` for commands.")
                 jobs = [self.mon.run(), self.mon.run_sync()]
                 if self.shipper:
                     jobs.append(self.shipper.run())

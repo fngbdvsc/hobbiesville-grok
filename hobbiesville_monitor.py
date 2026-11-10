@@ -879,7 +879,7 @@ class Monitor:
         prev, self.last_currency = self.last_currency, cur
         if cur == STORE_CURRENCY:
             if prev:
-                await self._say(f"Hobbiesville is showing me the {STORE_COUNTRY} store again (prices in {cur}).")
+                await self._say(f"Hobbiesville is showing me the {STORE_COUNTRY} store again (prices in {cur}).", kind="maintenance")
             return
         msg = (f"Hobbiesville is showing me its {cur} store, not the {STORE_COUNTRY} one, even after I picked "
                f"{STORE_COUNTRY} in its country picker. Products only sold in {STORE_COUNTRY} will look like "
@@ -994,7 +994,7 @@ class Monitor:
                 tries = (f" after {self.blocks_in_row} blocked tries over {mins:.0f} min"
                          if self.blocks_in_row > 1 else f" after {mins:.0f} min")
                 await self._say(f"Back to normal{tries}: Hobbiesville is returning product data again, "
-                                f"resuming checks. Got through on: {self.describe(job)}.")
+                                f"resuming checks. Got through on: {self.describe(job)}.", kind="maintenance")
         except Blocked as b:
             await self.on_blocked(job, b)
         except asyncio.CancelledError:

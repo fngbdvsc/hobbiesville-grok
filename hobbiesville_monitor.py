@@ -768,7 +768,7 @@ class Monitor:
 
     def __init__(self, session, send_alert, send_text,
                  clock=time.monotonic, sleep=asyncio.sleep, rand=random.uniform,
-                 dashboard=None, shipper=None, session_factory=None, send_error=None, collections=None):
+                 dashboard=None, shipper=None, session_factory=None, send_maintenance=None, collections=None):
         self.session = session
         self.collections = list(SCAN_COLLECTIONS if collections is None else collections)
         self.baselined = set()     # (collection, page) pages read at least once since start
@@ -777,7 +777,7 @@ class Monitor:
         self.last_currency = None
         self.send_alert = send_alert
         self.send_text = send_text
-        self.send_error = send_error
+        self.send_maintenance = send_maintenance
         self.session_factory = session_factory
         self.dashboard = dashboard
         self.shipper = shipper
@@ -830,24 +830,24 @@ class Monitor:
             self.shipper.push(kind, LOG_TAG + re.sub(r"[*`]", "", content), self.orig.get(sku, sku))
 
     def dash_error(self, key, content, sku=None):
-        """Every error goes to the Discord error channel; the dashboard gets the same one at most every ERROR_REPEAT_SECONDS."""
-        self.error_channel(content)
+        """Every error goes to the Discord maintenance channel; the dashboard gets the same one at most every ERROR_REPEAT_SECONDS."""
+        self.maintenance_channel(content)
         now = self.clock()
         if now - self._err_seen.get(key, -1e9) < ERROR_REPEAT_SECONDS:
             return
         self._err_seen[key] = now
         self.dash_log("error", content, sku)
 
-    def error_channel(self, text):
-        """Copy an error to the Discord error channel (ERROR_CHANNEL_ID), without making the caller wait."""
-        if self.send_error is None:
+    def maintenance_channel(self, text):
+        """Copy an error to the Discord maintenance channel (MAINTENANCE_CHANNEL_ID), without making the caller wait."""
+        if self.send_maintenance is None:
             return
 
         async def send():
             try:
-                await self.send_error(text)
+                await self.send_maintenance(text)
             except Exception as e:
-                print(f"[discord] couldn't send to the error channel: {e}")
+                print(f"[discord] couldn't send to the maintenance channel: {e}")
         try:
             asyncio.get_running_loop().create_task(send())
         except RuntimeError:
@@ -856,17 +856,17 @@ class Monitor:
     async def _say(self, text, kind="info", sku=None):
         """Status messages. With the dashboard connected they go only there, so Discord just gets alerts."""
         print(f"[status] {text}")
-        if kind == "error" and self.send_error is not None:
+        if kind in ("error", "maintenance") and self.send_maintenance is not None:
             try:
-                await self.send_error(text)      # errors and blocks go to the error channel, never the main chat
+                await self.send_maintenance(text)      # errors, blocks and startup info go to the maintenance channel, never the main chat
             except Exception as e:
-                print(f"[discord] couldn't send to the error channel: {e}")
+                print(f"[discord] couldn't send to the maintenance channel: {e}")
         elif not self.shipper or STATUS_IN_DISCORD:
             try:
                 await self.send_text(text)
             except Exception as e:
                 print(f"[discord] couldn't send message: {e}")
-        self.dash_log(kind, text, sku)
+        self.dash_log("info" if kind == "maintenance" else kind, text, sku)
 
     def store_seen(self):
         """The currency Hobbiesville's cart reported (None = not known, e.g. light mode)."""
@@ -1023,7 +1023,7 @@ class Monitor:
         print(f"[BLOCKED] (#{self.blocks_in_row} in a row) {msg}")
         now = self.clock()
         if not first_block and now - self.last_block_note < BLOCK_UPDATE_SECONDS:
-            self.error_channel(f"BLOCKED (#{self.blocks_in_row} in a row): {msg}")
+            self.maintenance_channel(f"BLOCKED (#{self.blocks_in_row} in a row): {msg}")
         if first_block:          # one message when a block starts, then an update every 10 minutes
             self.block_started = self.last_block_note = now
             await self._say(msg, kind="error")
@@ -1522,7 +1522,7 @@ def run_bot():
     if not token or not channel_raw:
         sys.exit("Missing DISCORD_TOKEN or CHANNEL_ID. Set them in Railway Variables.")
     channel_id = int(channel_raw)
-    error_channel_id = int(os.environ.get("ERROR_CHANNEL_ID", "").strip() or 1569512045525729623)   # every error is copied here
+    maintenance_channel_id = int((os.environ.get("MAINTENANCE_CHANNEL_ID") or os.environ.get("ERROR_CHANNEL_ID") or "").strip() or 1569512045525729623)   # every error is copied here
 
     intents = discord.Intents.default()
     intents.message_content = True      # needed to read !commands (enable it in the Developer Portal too)
@@ -1541,7 +1541,7 @@ def run_bot():
                 return make_session(proxy)
             self.mon = Monitor(new_session(), self.post_alert, self.post_text,
                                dashboard=dash, shipper=shipper, session_factory=new_session,
-                               send_error=self.post_error if error_channel_id else None)
+                               send_maintenance=self.post_maintenance if maintenance_channel_id else None)
             self.bg = asyncio.create_task(self.run_monitor())
 
         async def run_monitor(self):
@@ -1566,7 +1566,7 @@ def run_bot():
                 else:
                     method = "light (plain web requests, no browser). Delete the FETCHER variable to use Chrome."
                 await self.mon._say(
-                    f"Hobbiesville bot online ({where}).\n{proxy_line}\n"
+                    kind="maintenance", text=f"Hobbiesville bot online ({where}).\n{proxy_line}\n"
                     f"Method: {method}\n"
                     f"Collection scan: {', '.join(self.mon.collections) or 'off'}.\n"
                     f"Alerts when a watched or scanned product comes into stock, or a new one is listed. "
@@ -1584,10 +1584,10 @@ def run_bot():
             if ch is not None:
                 await ch.send(text[:1900])
 
-        async def post_error(self, text):
-            ch = self.get_channel(error_channel_id)
+        async def post_maintenance(self, text):
+            ch = self.get_channel(maintenance_channel_id)
             if ch is None:
-                print(f"[discord] error channel {error_channel_id} not found (check ERROR_CHANNEL_ID and the bot's access)")
+                print(f"[discord] maintenance channel {maintenance_channel_id} not found (check MAINTENANCE_CHANNEL_ID and the bot's access)")
                 return
             await ch.send(f"[{local_now():%I:%M %p}] [Hobbiesville] {text}"[:1900])
 
@@ -1621,7 +1621,7 @@ def run_bot():
             return bool(perms and perms.manage_guild)
 
         async def on_message(self, message):
-            if message.author.bot or message.channel.id not in (channel_id, error_channel_id):
+            if message.author.bot or message.channel.id not in (channel_id, maintenance_channel_id):
                 return
             if not message.content.startswith("!"):
                 return

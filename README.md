@@ -18,7 +18,7 @@ python3 -m unittest discover tests
 1. New Project -> Deploy from GitHub repo -> pick this repo (branch `main`).
 2. Start Command: leave empty (the Dockerfile starts the virtual screen, then the bot). Replicas: 1 (set in `railway.json`).
 3. Variables: `DISCORD_TOKEN`, `CHANNEL_ID`, and optionally `DASHBOARD_URL`, `BOT_API_KEY`,
-   `ROLE_ID`, `ERROR_CHANNEL_ID`, `MIN_SECONDS_PER_ROUND` (60), `BLOCK_RETRY_SECONDS` (300),
+   `ROLE_ID`, `MAINTENANCE_CHANNEL_ID`, `MIN_SECONDS_PER_ROUND` (60), `BLOCK_RETRY_SECONDS` (300),
    `BLOCK_RETRY_MAX` (1800), `SCAN_COLLECTIONS` (pokemon-trading-cards; comma-separated, `0` = off),
    `SCAN_PAGES` (4 pages of 250 products), `TIMEZONE` (America/Toronto), `STATUS_IN_DISCORD` (0), `DATA_DIR` (.),
    `FETCHER` (browser; `light` = no Chrome), `PROXY` (none).

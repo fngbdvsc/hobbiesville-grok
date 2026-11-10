@@ -856,7 +856,12 @@ class Monitor:
     async def _say(self, text, kind="info", sku=None):
         """Status messages. With the dashboard connected they go only there, so Discord just gets alerts."""
         print(f"[status] {text}")
-        if not self.shipper or STATUS_IN_DISCORD:
+        if kind == "error" and self.send_error is not None:
+            try:
+                await self.send_error(text)      # errors and blocks go to the error channel, never the main chat
+            except Exception as e:
+                print(f"[discord] couldn't send to the error channel: {e}")
+        elif not self.shipper or STATUS_IN_DISCORD:
             try:
                 await self.send_text(text)
             except Exception as e:
@@ -1016,8 +1021,9 @@ class Monitor:
                f"after {good} request(s) worked. I'm pausing ALL requests for {wait}, then I'll retry on "
                f"my own. Hobbiesville returned: {b}.")
         print(f"[BLOCKED] (#{self.blocks_in_row} in a row) {msg}")
-        self.error_channel(f"BLOCKED (#{self.blocks_in_row} in a row): {msg}")
         now = self.clock()
+        if not first_block and now - self.last_block_note < BLOCK_UPDATE_SECONDS:
+            self.error_channel(f"BLOCKED (#{self.blocks_in_row} in a row): {msg}")
         if first_block:          # one message when a block starts, then an update every 10 minutes
             self.block_started = self.last_block_note = now
             await self._say(msg, kind="error")
